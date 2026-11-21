@@ -3,17 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FretXR – Guitar Highway</title>
+<title>FretXR</title>
 <style>
-  body{margin:0;background:#0d0f14;color:#eef;font-family:system-ui,sans-serif;display:flex;justify-content:center}
-  main{max-width:520px;padding:28px 20px}
-  h1{margin:0 0 4px;font-size:30px} p{color:#aab;line-height:1.45}
-  label{display:block;margin:16px 0 6px;font-weight:600}
-  select,input[type=range]{width:100%;font-size:18px;padding:8px;background:#1b1f2a;color:#fff;border:1px solid #334;border-radius:8px}
-  button{margin-top:22px;width:100%;font-size:22px;padding:16px;border:0;border-radius:12px;background:#3b82f6;color:#fff;font-weight:700}
-  button:disabled{background:#334;color:#889}
-  #status{margin-top:14px;color:#fc6;min-height:1.4em}
-  ol{color:#aab;padding-left:20px;line-height:1.5}
+  html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 30%,#2a1450,#0b0d16 70%);color:#eef;font-family:system-ui,sans-serif}
+  main{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px}
+  h1{margin:0;font-size:44px;letter-spacing:1px}
+  button{font-size:26px;padding:22px 44px;border:0;border-radius:18px;background:linear-gradient(90deg,#ff3fb4,#7a5bff);color:#fff;font-weight:800}
+  button:disabled{background:#333;color:#888}
+  #status{color:#fc6;min-height:1.4em;text-align:center;padding:0 20px}
 </style>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -22,19 +19,8 @@
 <body>
 <main>
   <h1>🎸 FretXR</h1>
-  <p>Electric guitar · mixed reality note highway</p>
-  <label for="song">Song</label>
-  <select id="song"></select>
-  <label for="speed">Speed: <span id="speedVal">100%</span></label>
-  <input id="speed" type="range" min="50" max="120" step="5" value="100">
-  <button id="go" disabled>Checking VR support…</button>
+  <button id="go" disabled>Loading…</button>
   <div id="status"></div>
-  <ol>
-    <li>Have your amp audible (the headset mic listens for notes).</li>
-    <li>Hold guitar in playing position. Touch the <b>front tip</b> of your controller to each point and pull the <b>trigger</b>:<br>
-      ① nut at the <b>low E</b> string → ② nut at the <b>high E</b> string → ③ <b>12th fret</b>, middle of the neck.</li>
-    <li>Set the controller down, then pinch (or press trigger) to start. <b>Grip button</b> = re-align anytime.</li>
-  </ol>
 </main>
 
 <script type="module">
@@ -45,21 +31,25 @@ const OPEN_MIDI = {6:40,5:45,4:50,3:55,2:59,1:64};
 const COLORS    = {6:0xff3b3b,5:0xffd23b,4:0x3b8bff,3:0xff8a1f,2:0x2fd36b,1:0xb05bff};
 function seq(bpm, notes){ const spb=60/bpm; return notes.map(([beat,s,f])=>({t:beat*spb,s,f})); }
 function line(list, step=1, start=0){ return list.map((sf,i)=>[start+i*step, sf[0], sf[1]]); }
-
 const pentUp = [[6,0],[6,3],[5,0],[5,2],[4,0],[4,2],[3,0],[3,2],[2,0],[2,3],[1,0],[1,3]];
 const chrom = []; for (const s of [6,5,4,3,2,1]) for (const f of [1,2,3,4]) chrom.push([s,f]);
 const SONGS = {
-  'Open strings warm-up':      seq(60,  line([...[6,5,4,3,2,1].map(s=>[s,0]), ...[1,2,3,4,5,6].map(s=>[s,0])], 2)),
-  'E minor pentatonic':        seq(80,  line([...pentUp, ...pentUp.slice().reverse()], 1)),
-  'Chromatic 1-2-3-4':         seq(75,  line(chrom, 1)),
-  'Power riff (original)':     seq(95,  line([[6,0],[6,0],[6,3],[6,5],[6,0],[6,0],[6,7],[6,5],
-                                              [6,0],[6,0],[6,3],[6,5],[5,2],[5,0],[6,3],[6,0]], 1)),
-  'Low-E fret walk':           seq(80,  line([0,1,2,3,4,5,7,9,12,9,7,5,3,1,0].map(f=>[6,f]), 1)),
+  'Open strings warm-up':  seq(60, line([...[6,5,4,3,2,1].map(s=>[s,0]), ...[1,2,3,4,5,6].map(s=>[s,0])], 2)),
+  'E minor pentatonic':    seq(80, line([...pentUp, ...pentUp.slice().reverse()], 1)),
+  'Chromatic 1-2-3-4':     seq(75, line(chrom, 1)),
+  'Power riff (original)': seq(95, line([[6,0],[6,0],[6,3],[6,5],[6,0],[6,0],[6,7],[6,5],
+                                         [6,0],[6,0],[6,3],[6,5],[5,2],[5,0],[6,3],[6,0]], 1)),
+  'Low-E fret walk':       seq(80, line([0,1,2,3,4,5,7,9,12,9,7,5,3,1,0].map(f=>[6,f]), 1)),
 };
-const songSel = document.getElementById('song');
-for (const k in SONGS){ const o=document.createElement('option'); o.textContent=k; songSel.appendChild(o); }
-const speedEl = document.getElementById('speed'), speedVal = document.getElementById('speedVal');
-speedEl.oninput = ()=> speedVal.textContent = speedEl.value+'%';
+const SONG_NAMES = Object.keys(SONGS);
+const MODES = ['Play','Wait','Watch'];
+const MODE_INFO = {Play:'Song keeps going, mic scores you', Wait:'Song pauses until you play each note', Watch:'No listening, just follow along'};
+
+// ---------- Settings (remembered on this headset) ----------
+const settings = {song:0, speed:100, mode:'Play', tilt:35};
+try{ Object.assign(settings, JSON.parse(localStorage.getItem('fretxr')||'{}')); }catch(e){}
+function saveSettings(){ try{ localStorage.setItem('fretxr', JSON.stringify(settings)); }catch(e){} }
+const songName = ()=> SONG_NAMES[settings.song % SONG_NAMES.length];
 
 // ---------- Pitch detection (autocorrelation) ----------
 let analyser=null, audioBuf=null, sampleRate=48000;
@@ -85,12 +75,14 @@ function detectMidi(){
     if(v>best){best=v;bestLag=lag;}
   }
   if(best<0.6) return null;
-  // take the first lag that's close to the max (avoids octave-down errors)
   for(let lag=minLag+1; lag<maxLag; lag++){
     if(c[lag]>0.9*best && c[lag]>=c[lag-1] && c[lag]>=c[lag+1]){ bestLag=lag; break; }
   }
-  const freq = sampleRate/bestLag;
-  return 69 + 12*Math.log2(freq/440);
+  return 69 + 12*Math.log2((sampleRate/bestLag)/440);
+}
+function matches(det, expected){
+  const diff=det-expected, r=Math.round(diff);
+  return Math.abs(diff)<0.6 || (((r%12)+12)%12===0 && Math.abs(diff-r)<0.6);
 }
 
 // ---------- Three.js / WebXR ----------
@@ -103,9 +95,9 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
 scene.add(new THREE.HemisphereLight(0xffffff,0x444466,2.4));
+const xrCam = ()=> renderer.xr.getCamera(camera);
 
 const ADD = THREE.AdditiveBlending;
-// soft round glow texture used by gems, sparks, markers
 const glowTex = (()=>{ const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
   const g=x.createRadialGradient(64,64,0,64,64,64); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.25,'rgba(255,255,255,0.6)'); g.addColorStop(1,'rgba(255,255,255,0)');
   x.fillStyle=g; x.fillRect(0,0,128,128); return new THREE.CanvasTexture(c); })();
@@ -118,57 +110,158 @@ function textSprite(text, color='#fff', px=64, w=256, h=96){
   x.font=`900 ${px}px system-ui`; x.textAlign='center'; x.textBaseline='middle';
   x.lineWidth=px/7; x.strokeStyle='rgba(0,0,0,0.75)'; x.strokeText(text,w/2,h/2);
   x.fillStyle=color; x.fillText(text,w/2,h/2);
-  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,depthWrite:false}));
-  return s;
+  return new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,depthWrite:false}));
 }
 const hex = c => '#'+c.toString(16).padStart(6,'0');
 
-// controllers
-[0,1].forEach(i=>{
+// ---------- Controllers with pointer rays ----------
+const controllers = [0,1].map(i=>{
   const c = renderer.xr.getController(i); scene.add(c);
   c.add(new THREE.Mesh(new THREE.SphereGeometry(0.005), new THREE.MeshBasicMaterial({color:0x00ffff})));
   c.add(glowSprite(0x00ffff,0.03,0.8));
+  const ray = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3(0,0,-1)]),
+    new THREE.LineBasicMaterial({color:0xff7ad9,transparent:true,opacity:0.8}));
+  ray.scale.z=1.5; ray.visible=false; c.add(ray); c.userData.ray=ray;
   c.addEventListener('selectstart', ()=>onTrigger(c));
-  c.addEventListener('squeezestart', ()=>startCalibration());
+  c.addEventListener('squeezestart', ()=>{ if(state!=='calib') startCalibration(); });
+  return c;
 });
 
-// HUD panel
-const pCanvas = document.createElement('canvas'); pCanvas.width=1024; pCanvas.height=360;
-const pCtx = pCanvas.getContext('2d'); const pTex = new THREE.CanvasTexture(pCanvas);
-const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.176), new THREE.MeshBasicMaterial({map:pTex,transparent:true,depthWrite:false}));
-scene.add(panel);
-let lastPanel='';
-function drawPanel(o){
-  const key=JSON.stringify(o); if(key===lastPanel) return; lastPanel=key;
-  const x=pCtx; x.clearRect(0,0,1024,360);
-  const g=x.createLinearGradient(0,0,1024,0); g.addColorStop(0,'rgba(20,10,40,0.85)'); g.addColorStop(1,'rgba(10,20,45,0.85)');
-  x.fillStyle=g; x.beginPath(); x.roundRect(0,0,1024,360,40); x.fill();
-  x.strokeStyle='rgba(255,80,200,0.6)'; x.lineWidth=4; x.stroke();
-  x.fillStyle='#ff4fd8'; x.font='800 50px system-ui'; x.fillText(o.title||'',44,74);
-  x.fillStyle='#c9d0ff'; x.font='36px system-ui';
-  (o.lines||[]).forEach((l,i)=>x.fillText(l,44,140+i*52));
+// ---------- HUD (follows your head) ----------
+const hCanvas=document.createElement('canvas'); hCanvas.width=1024; hCanvas.height=300;
+const hCtx=hCanvas.getContext('2d'); const hTex=new THREE.CanvasTexture(hCanvas);
+const hud=new THREE.Mesh(new THREE.PlaneGeometry(0.36,0.105), new THREE.MeshBasicMaterial({map:hTex,transparent:true,depthTest:false,depthWrite:false}));
+hud.renderOrder=10; scene.add(hud);
+let lastHud='';
+function drawHud(o){
+  const key=JSON.stringify(o); if(key===lastHud) return; lastHud=key;
+  const x=hCtx; x.clearRect(0,0,1024,300);
+  const g=x.createLinearGradient(0,0,1024,0); g.addColorStop(0,'rgba(25,10,45,0.8)'); g.addColorStop(1,'rgba(10,18,45,0.8)');
+  x.fillStyle=g; x.beginPath(); x.roundRect(0,0,1024,300,40); x.fill();
+  x.strokeStyle='rgba(255,80,200,0.55)'; x.lineWidth=4; x.stroke();
+  x.fillStyle='#ff4fd8'; x.font='800 46px system-ui'; x.fillText(o.title||'',40,64);
   if(o.acc!==undefined){
-    x.fillStyle='#ff7ad9'; x.font='900 96px system-ui'; x.fillText(o.acc+'%',44,300);
-    x.fillStyle='#fff'; x.fillText(String(o.combo),480,300);
-    x.font='28px system-ui'; x.fillStyle='#99a';
-    x.fillText('ACCURACY',48,222); x.fillText('COMBO',484,222);
-    x.fillText('HEARING',780,222); x.font='900 72px system-ui'; x.fillStyle='#7fffd4'; x.fillText(o.heard,780,300);
+    x.font='26px system-ui'; x.fillStyle='#99a';
+    x.fillText(o.mode==='Watch'?'MODE':'ACCURACY',44,130); x.fillText('COMBO',420,130); x.fillText('HEARING',720,130);
+    x.font='900 92px system-ui';
+    x.fillStyle='#ff7ad9'; x.fillText(o.mode==='Watch'?'Watch':o.acc+'%',40,228);
+    x.fillStyle='#fff'; x.fillText(String(o.combo),416,228);
+    x.fillStyle='#7fffd4'; x.font='900 72px system-ui'; x.fillText(o.heard,716,222);
+    if(o.sub){ x.font='30px system-ui'; x.fillStyle='#ffd36b'; x.fillText(o.sub,44,280); }
+  } else {
+    x.fillStyle='#d4d9ff'; x.font='36px system-ui';
+    (o.lines||[]).forEach((l,i)=>x.fillText(l,40,130+i*52));
   }
-  pTex.needsUpdate=true;
+  hTex.needsUpdate=true;
+}
+const hudOffset=new THREE.Vector3(0,0.2,-0.85), hudTarget=new THREE.Vector3(), hudInit={v:false};
+function updateHud(){
+  const cam=xrCam();
+  hudTarget.copy(hudOffset).applyQuaternion(cam.quaternion).add(cam.position);
+  if(!hudInit.v){ hud.position.copy(hudTarget); hudInit.v=true; } else hud.position.lerp(hudTarget,0.06);
+  hud.lookAt(cam.position);
 }
 
-// state
-let state='calib', calibStep=0, calibPts=[];
+// ---------- In-VR menu (point with the ray, pull trigger) ----------
+const mCanvas=document.createElement('canvas'); mCanvas.width=1024; mCanvas.height=900;
+const mCtx=mCanvas.getContext('2d'); const mTex=new THREE.CanvasTexture(mCanvas);
+const menu=new THREE.Mesh(new THREE.PlaneGeometry(0.56,0.49), new THREE.MeshBasicMaterial({map:mTex,transparent:true,depthTest:false,depthWrite:false}));
+menu.renderOrder=11; menu.visible=false; scene.add(menu);
+let buttons=[], hoverId=null, menuResult=null;
+function menuRows(){
+  return [
+    {label:'Song',  value:songName(),          dec:'songPrev',  inc:'songNext'},
+    {label:'Speed', value:settings.speed+'%',  dec:'speedDown', inc:'speedUp'},
+    {label:'Mode',  value:settings.mode,       dec:'modePrev',  inc:'modeNext', note:MODE_INFO[settings.mode]},
+    {label:'Highway angle', value:settings.tilt+'°', dec:'tiltDown', inc:'tiltUp', note:'Higher = steeper up'},
+  ];
+}
+function drawMenu(){
+  const x=mCtx; x.clearRect(0,0,1024,900); buttons=[];
+  const g=x.createLinearGradient(0,0,0,900); g.addColorStop(0,'rgba(30,12,55,0.92)'); g.addColorStop(1,'rgba(10,14,35,0.92)');
+  x.fillStyle=g; x.beginPath(); x.roundRect(0,0,1024,900,48); x.fill();
+  x.strokeStyle='rgba(255,80,200,0.6)'; x.lineWidth=5; x.stroke();
+  x.fillStyle='#fff'; x.font='900 58px system-ui'; x.fillText('🎸 FretXR',48,86);
+  if(menuResult){ x.fillStyle='#ffd36b'; x.font='700 34px system-ui'; x.fillText(menuResult,400,82); }
+  let y=130;
+  for(const r of menuRows()){
+    x.fillStyle='#99a'; x.font='30px system-ui'; x.fillText(r.label.toUpperCase(),56,y+28);
+    if(r.note){ x.fillStyle='#778'; x.font='24px system-ui'; x.fillText(r.note,56,y+128); }
+    btn(r.dec,'◀',56,y+44,90,72); btn(r.inc,'▶',878,y+44,90,72);
+    x.fillStyle='#fff'; x.font='800 40px system-ui'; x.textAlign='center'; x.fillText(r.value,512,y+94); x.textAlign='left';
+    y+=150;
+  }
+  btn('realign','Re-align guitar',56,y+10,420,96);
+  btn('start', songActive?'▶ Resume':'▶ Start', 548,y+10,420,96, true);
+  if(songActive) btn('restart','↺ Restart',548,y+120,420,80);
+  mTex.needsUpdate=true;
+  function btn(id,label,bx,by,w,h,primary){
+    buttons.push({id,x:bx,y:by,w,h});
+    const hov=hoverId===id;
+    if(primary){ const gg=x.createLinearGradient(bx,0,bx+w,0); gg.addColorStop(0,'#ff3fb4'); gg.addColorStop(1,'#7a5bff'); x.fillStyle=gg; }
+    else x.fillStyle=hov?'rgba(255,120,220,0.45)':'rgba(255,255,255,0.1)';
+    x.beginPath(); x.roundRect(bx,by,w,h,20); x.fill();
+    if(hov){ x.strokeStyle='#fff'; x.lineWidth=4; x.stroke(); }
+    x.fillStyle='#fff'; x.font=`800 ${Math.min(44,h*0.5)}px system-ui`; x.textAlign='center'; x.textBaseline='middle';
+    x.fillText(label,bx+w/2,by+h/2+2); x.textAlign='left'; x.textBaseline='alphabetic';
+  }
+}
+function openMenu(result){
+  menuResult=result||null;
+  const cam=xrCam();
+  const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(cam.quaternion); fwd.y=0; fwd.normalize();
+  menu.position.copy(cam.position).addScaledVector(fwd,0.75); menu.position.y=cam.position.y-0.1;
+  menu.lookAt(cam.position.x,menu.position.y,cam.position.z);
+  menu.visible=true; hud.visible=false; drawMenu();
+  controllers.forEach(c=>c.userData.ray.visible=true);
+}
+function closeMenu(){ menu.visible=false; hud.visible=true; controllers.forEach(c=>c.userData.ray.visible=false); }
+
+const raycaster=new THREE.Raycaster(), tmpM=new THREE.Matrix4();
+function menuHit(c){
+  tmpM.identity().extractRotation(c.matrixWorld);
+  raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+  raycaster.ray.direction.set(0,0,-1).applyMatrix4(tmpM);
+  const h=raycaster.intersectObject(menu)[0]; if(!h||!h.uv) return null;
+  const px=h.uv.x*1024, py=(1-h.uv.y)*900;
+  const b=buttons.find(b=>px>=b.x&&px<=b.x+b.w&&py>=b.y&&py<=b.y+b.h);
+  return {dist:h.distance, id:b?b.id:null};
+}
+function updateMenuHover(){
+  let id=null;
+  for(const c of controllers){ const r=menuHit(c); c.userData.ray.scale.z=r?r.dist:1.5; if(r&&r.id) id=r.id; }
+  if(id!==hoverId){ hoverId=id; drawMenu(); }
+}
+function menuAction(id){
+  const n=SONG_NAMES.length;
+  switch(id){
+    case 'songPrev': settings.song=(settings.song+n-1)%n; songActive=false; break;
+    case 'songNext': settings.song=(settings.song+1)%n; songActive=false; break;
+    case 'speedDown': settings.speed=Math.max(40,settings.speed-10); songActive=false; break;
+    case 'speedUp': settings.speed=Math.min(150,settings.speed+10); songActive=false; break;
+    case 'modePrev': settings.mode=MODES[(MODES.indexOf(settings.mode)+2)%3]; break;
+    case 'modeNext': settings.mode=MODES[(MODES.indexOf(settings.mode)+1)%3]; break;
+    case 'tiltDown': settings.tilt=Math.max(0,settings.tilt-10); rebuild(); break;
+    case 'tiltUp': settings.tilt=Math.min(80,settings.tilt+10); rebuild(); break;
+    case 'realign': closeMenu(); startCalibration(); return;
+    case 'start': closeMenu(); songActive?resumeSong():startSong(); return;
+    case 'restart': closeMenu(); startSong(); return;
+  }
+  saveSettings(); menuResult=null; drawMenu();
+}
+
+// ---------- State ----------
+let state='calib', calibStep=0, calibPts=[], calibCam=null, songActive=false;
 const board = new THREE.Group(); scene.add(board);
+const notesG = new THREE.Group(); scene.add(notesG);
 const fx = new THREE.Group(); scene.add(fx);
-let geo=null, lanes=[], noteObjs=[], songStart=0, score={hit:0,miss:0,streak:0,best:0}, detected=null;
+let geo=null, lanes=[], noteObjs=[], songTime=0, score, detected=null;
 const markers=[];
 
 function startCalibration(){
-  state='calib'; calibStep=0; calibPts=[];
+  state='calib'; calibStep=0; calibPts=[]; songActive=false;
   markers.forEach(m=>scene.remove(m)); markers.length=0;
-  clearNotes(); board.clear(); lanes=[];
-  placePanelInFront(); calibPrompt();
+  clearNotes(); board.clear(); lanes=[]; closeMenu(); calibPrompt();
 }
 function calibPrompt(){
   const msgs=[
@@ -176,55 +269,51 @@ function calibPrompt(){
     ['Align ② of 3',['Touch the NUT at the HIGH E string','→ trigger']],
     ['Align ③ of 3',['Touch the 12th FRET, middle of neck','→ trigger']],
   ];
-  drawPanel({title:msgs[calibStep][0], lines:msgs[calibStep][1]});
-}
-function placePanelInFront(){
-  const cam = renderer.xr.getCamera(camera);
-  const dir = new THREE.Vector3(0,0,-1).applyQuaternion(cam.quaternion); dir.y=0; dir.normalize();
-  panel.position.copy(cam.position).addScaledVector(dir,0.8); panel.position.y = cam.position.y-0.05;
-  panel.lookAt(cam.position.x, panel.position.y, cam.position.z);
+  drawHud({title:msgs[calibStep][0], lines:msgs[calibStep][1]});
 }
 function onTrigger(c){
+  if(menu.visible){ const r=menuHit(c); if(r&&r.id) menuAction(r.id); return; }
   if(state==='calib'){
-    const p = new THREE.Vector3(); c.getWorldPosition(p);
-    calibPts.push(p.clone());
-    const m = glowSprite(0xffee44,0.04); m.position.copy(p); scene.add(m); markers.push(m);
-    calibStep++;
-    if(calibStep<3) calibPrompt(); else { buildBoard(); state='ready'; readyPrompt(); }
-  } else if(state==='ready' || state==='done') startSong();
+    const p=new THREE.Vector3(); c.getWorldPosition(p); calibPts.push(p);
+    const m=glowSprite(0xffee44,0.04); m.position.copy(p); scene.add(m); markers.push(m);
+    if(++calibStep<3) calibPrompt();
+    else { calibCam=xrCam().position.clone(); buildBoard(); state='menu'; openMenu('Aligned! ✓'); }
+  } else if(state==='playing'){ state='menu'; openMenu('Paused'); }
 }
-function readyPrompt(){ drawPanel({title:songSel.value, lines:['Aligned! 🎸','Trigger / pinch = start','Grip = re-align']}); }
 
 // ---------- Fretboard + highway ----------
-const HWY = 1.5;   // highway length (m)
+const HWY = 1.5;
 function fretDist(f){ return geo.L*(1-Math.pow(2,-f/12)); }
 function posOnDist(s,d){ const t=(6-s)/5; const widen=1+0.3*(d/(geo.L/2));
   return geo.nutMid.clone().addScaledVector(geo.neck,d).addScaledVector(geo.across,(t-0.5)*widen); }
 function fretMid(f){ return f===0 ? -0.015 : (fretDist(f-1)+fretDist(f))/2 + (fretDist(f)-fretDist(f-1))*0.15; }
 function posOn(s,f){ return posOnDist(s, fretMid(f)); }
-
 function quad(a,b,c,d,mat){ const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute([...a.toArray(),...b.toArray(),...c.toArray(),...a.toArray(),...c.toArray(),...d.toArray()],3));
-  g.computeVertexNormals(); return new THREE.Mesh(g,mat); }
+  return new THREE.Mesh(g,mat); }
 function seg(a,b,color,opacity){ return new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),
   new THREE.LineBasicMaterial({color,transparent:true,opacity,blending:ADD,depthWrite:false})); }
 
+function rebuild(){ if(!calibPts.length||calibPts.length<3) return; buildBoard(); if(songActive) relayoutNotes(); }
 function buildBoard(){
   markers.forEach(m=>scene.remove(m)); markers.length=0; board.clear(); lanes=[];
-  const [A,B,C] = calibPts;
-  const nutMid = A.clone().add(B).multiplyScalar(0.5);
-  const half = C.clone().sub(nutMid);
-  const L = half.length()*2, neck = half.clone().normalize(), across = B.clone().sub(A);
-  const cam = renderer.xr.getCamera(camera).position.clone();
-  // highway direction: perpendicular to the neck, pointing AWAY from you, tilted up a bit
-  const toCam = cam.clone().sub(nutMid);
-  let out = toCam.clone().addScaledVector(neck,-toCam.dot(neck)).negate().normalize();
-  out.addScaledVector(new THREE.Vector3(0,1,0),0.45); out.addScaledVector(neck,-out.dot(neck)).normalize();
-  geo = {A,B,nutMid,L,neck,across,out};
+  const [A,B,C]=calibPts;
+  const nutMid=A.clone().add(B).multiplyScalar(0.5);
+  const half=C.clone().sub(nutMid);
+  const L=half.length()*2, neck=half.clone().normalize(), across=B.clone().sub(A);
+  const up=new THREE.Vector3(0,1,0);
+  // flat direction away from you, perpendicular to the neck
+  const toCam=calibCam.clone().sub(nutMid); toCam.y=0;
+  let away=toCam.negate().addScaledVector(neck,-toCam.dot(neck));
+  if(away.lengthSq()<1e-6) away.set(0,0,-1);
+  away.normalize();
+  // tilt it up by the chosen angle
+  const a=THREE.MathUtils.degToRad(settings.tilt);
+  const out=away.clone().multiplyScalar(Math.cos(a)).addScaledVector(up,Math.sin(a));
+  out.addScaledVector(neck,-out.dot(neck)).normalize();
+  geo={A,B,nutMid,L,neck,across,out};
 
-  // strings (glowing, colored)
   for(const s of [6,5,4,3,2,1]) board.add(seg(posOnDist(s,-0.01),posOnDist(s,fretDist(22)),COLORS[s],0.75));
-  // frets + numbers
   for(let f=0; f<=22; f++){
     const d=fretDist(f);
     board.add(seg(posOnDist(6.3,d),posOnDist(0.7,d),f===0?0xffffff:0x9aa0ff,f===0?0.9:0.35));
@@ -234,48 +323,48 @@ function buildBoard(){
       const dot=glowSprite(0xb05bff,0.022,0.9); dot.position.copy(posOnDist(6.6,fretMid(f))); board.add(dot);
     }
   }
-  // highway lanes: one translucent strip per fret slot, rising out of the fretboard
   for(let f=0; f<=22; f++){
-    const d0 = f===0 ? -0.03 : fretDist(f-1), d1 = f===0 ? 0 : fretDist(f);
-    const a=posOnDist(3.5,d0), b=posOnDist(3.5,d1);
-    const a2=a.clone().addScaledVector(out,HWY), b2=b.clone().addScaledVector(out,HWY);
-    const mat=new THREE.MeshBasicMaterial({color:f%2?0x1a2a6a:0x23307a,transparent:true,opacity:0.12,side:THREE.DoubleSide,depthWrite:false});
-    const m=quad(a,b,b2,a2,mat); board.add(m);
-    board.add(seg(b,b2,0x6f7cff,0.18));
-    lanes[f]={mesh:m,mat,base:0.12,glow:0,color:new THREE.Color(f%2?0x1a2a6a:0x23307a)};
+    const d0=f===0?-0.03:fretDist(f-1), d1=f===0?0:fretDist(f);
+    const p0=posOnDist(3.5,d0), p1=posOnDist(3.5,d1);
+    const base=new THREE.Color(f%2?0x1a2a6a:0x23307a);
+    const mat=new THREE.MeshBasicMaterial({color:base.clone(),transparent:true,opacity:0.12,side:THREE.DoubleSide,depthWrite:false});
+    board.add(quad(p0,p1,p1.clone().addScaledVector(out,HWY),p0.clone().addScaledVector(out,HWY),mat));
+    board.add(seg(p1,p1.clone().addScaledVector(out,HWY),0x6f7cff,0.18));
+    lanes[f]={mat,base,glow:0};
   }
-  // far-end fret numbers
   for(const f of [3,5,7,9,12,15]){ const n=textSprite(String(f),'#a8b0ff',64,128,96); n.scale.set(0.035,0.026,1);
     n.position.copy(posOnDist(3.5,fretMid(f))).addScaledVector(out,HWY+0.03); board.add(n); }
-
-  // HUD floats at the far end of the highway, a bit up, facing you
-  panel.position.copy(nutMid).addScaledVector(neck,L*0.3).addScaledVector(out,HWY*0.9).add(new THREE.Vector3(0,0.15,0));
-  panel.lookAt(cam);
 }
 
 // ---------- Notes ----------
-const LEAD = 2.4;
-const gemGeo = new THREE.CapsuleGeometry(0.008,0.02,4,12); gemGeo.rotateZ(Math.PI/2);
-function clearNotes(){ noteObjs.forEach(n=>board.remove(n.g)); noteObjs=[]; fx.clear(); }
+const LEAD=2.4;
+const gemGeo=new THREE.CapsuleGeometry(0.008,0.02,4,12); gemGeo.rotateZ(Math.PI/2);
+function clearNotes(){ notesG.clear(); noteObjs=[]; fx.clear(); effects.length=0; }
+function makeNote(n){
+  const col=COLORS[n.s], g=new THREE.Group();
+  const gem=new THREE.Mesh(gemGeo,new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.9,roughness:0.3}));
+  g.add(gem); g.add(glowSprite(col,0.07,0.7));
+  const lbl=textSprite(String(n.f),hex(col),80,128,96); lbl.scale.set(0.03,0.0225,1); g.add(lbl);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(0.009,0.012,32),new THREE.MeshBasicMaterial({color:col,transparent:true,blending:ADD,side:THREE.DoubleSide,depthWrite:false}));
+  g.visible=false; ring.visible=false; notesG.add(g); notesG.add(ring);
+  const o={...n,g,gem,lbl,ring,status:'pending',expected:OPEN_MIDI[n.s]+n.f};
+  layoutNote(o); return o;
+}
+function layoutNote(o){
+  o.target=posOn(o.s,o.f);
+  o.gem.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0), geo.across.clone().normalize());
+  o.lbl.position.set(0,0,0).addScaledVector(geo.out,0.02);
+  o.ring.position.copy(o.target); o.ring.lookAt(o.target.clone().add(geo.out));
+}
+function relayoutNotes(){ noteObjs.forEach(layoutNote); }
 function startSong(){
   clearNotes();
-  const speed = speedEl.value/100;
-  const list = SONGS[songSel.value].map(n=>({...n, t:n.t/speed + 3}));
-  for(const n of list){
-    const col=COLORS[n.s], g=new THREE.Group();
-    const gem=new THREE.Mesh(gemGeo,new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.9,roughness:0.3}));
-    gem.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0), geo.across.clone().normalize());
-    g.add(gem); g.add(glowSprite(col,0.07,0.7));
-    const lbl=textSprite(String(n.f),hex(col),80,128,96); lbl.scale.set(0.03,0.0225,1); lbl.position.addScaledVector(geo.out,0.02); g.add(lbl);
-    // landing ring on the fretboard
-    const ring=new THREE.Mesh(new THREE.RingGeometry(0.009,0.012,32),new THREE.MeshBasicMaterial({color:col,transparent:true,blending:ADD,side:THREE.DoubleSide,depthWrite:false}));
-    ring.position.copy(posOn(n.s,n.f)); ring.lookAt(ring.position.clone().add(geo.out)); ring.visible=false; board.add(ring);
-    g.visible=false; board.add(g);
-    noteObjs.push({...n, g, gem, ring, target:posOn(n.s,n.f), status:'pending', expected:OPEN_MIDI[n.s]+n.f});
-  }
+  const sp=settings.speed/100;
+  noteObjs=SONGS[songName()].map(n=>makeNote({...n,t:n.t/sp+3}));
   score={hit:0,miss:0,streak:0,best:0};
-  songStart = performance.now()/1000; state='playing';
+  songTime=0; songActive=true; resumeSong();
 }
+function resumeSong(){ state='playing'; lastT=performance.now()/1000; }
 
 // effects
 const effects=[];
@@ -287,91 +376,106 @@ function burst(pos,color){
 }
 function popText(pos,text,color){
   const s=textSprite(text,color,64,320,96); s.scale.set(0.09,0.027,1); s.position.copy(pos).addScaledVector(geo.out,0.05); fx.add(s);
-  effects.push({o:s,v:geo.out.clone().multiplyScalar(0.12).add(new THREE.Vector3(0,0.08,0)),life:0.8,t:0,text:true});
+  effects.push({o:s,v:geo.out.clone().multiplyScalar(0.12).add(new THREE.Vector3(0,0.08,0)),life:0.8,t:0});
 }
 function updateEffects(dt){
   for(let i=effects.length-1;i>=0;i--){ const e=effects[i]; e.t+=dt;
-    e.o.position.addScaledVector(e.v,dt); const k=1-e.t/e.life; e.o.material.opacity=Math.max(k,0);
+    e.o.position.addScaledVector(e.v,dt); e.o.material.opacity=Math.max(1-e.t/e.life,0);
     if(e.grow) e.o.scale.setScalar(0.12+e.t*0.6);
     if(e.t>=e.life){ fx.remove(e.o); effects.splice(i,1); } }
+}
+function hitNote(n,err){
+  n.status='hit'; score.hit++; score.streak++; score.best=Math.max(score.best,score.streak);
+  popText(n.target, err<0.08?'PERFECT!':err<0.18?'GREAT!':'OK', err<0.08?'#ffe14d':err<0.18?'#7dff9a':'#9ad');
+  burst(n.target,COLORS[n.s]); n.g.visible=false; n.ring.visible=false;
 }
 
 let lastT=performance.now()/1000;
 function updateSong(){
   const tNow=performance.now()/1000, dtF=Math.min(tNow-lastT,0.05); lastT=tNow;
-  const now = tNow - songStart;
-  detected = detectMidi();
+  const mode=settings.mode;
+  detected = mode==='Watch' ? null : detectMidi();
+
+  // advance the song clock (Wait mode holds at the first unplayed note)
+  let next=songTime+dtF;
+  if(mode==='Wait'){
+    const blocker=noteObjs.find(n=>n.status==='pending');
+    if(blocker && next>blocker.t) next=Math.max(songTime,blocker.t);
+  }
+  songTime=next; const now=songTime;
+  let waiting=false;
+
   let remaining=false; const want=new Map();
   for(const n of noteObjs){
-    const dt = n.t - now;
+    const dt=n.t-now;
     if(n.status==='pending'){
       remaining=true;
-      if(detected!==null && dt<0.2 && dt>-0.35){
-        const diff = detected - n.expected, r=Math.round(diff);
-        if(Math.abs(diff)<0.6 || (((r%12)+12)%12===0 && Math.abs(diff-r)<0.6)){
-          n.status='hit'; score.hit++; score.streak++; score.best=Math.max(score.best,score.streak);
-          const err=Math.abs(dt);
-          popText(n.target, err<0.08?'PERFECT!':err<0.18?'GREAT!':'OK', err<0.08?'#ffe14d':err<0.18?'#7dff9a':'#9ad');
-          burst(n.target,COLORS[n.s]); n.g.visible=false; n.ring.visible=false;
-        }
+      if(mode==='Watch'){
+        if(dt<=0){ n.status='hit'; score.hit++; score.streak++; burst(n.target,COLORS[n.s]); n.g.visible=false; n.ring.visible=false; }
+      } else {
+        if(detected!==null && dt<0.2 && (mode==='Wait' || dt>-0.35) && matches(detected,n.expected)) hitNote(n,Math.abs(dt));
+        if(mode==='Wait' && n.status==='pending' && dt<=0.001) waiting=true;
+        if(mode==='Play' && n.status==='pending' && dt<-0.35){ n.status='miss'; score.miss++; score.streak=0;
+          n.gem.material.color.set(0x441111); n.gem.material.emissive.set(0x330000); n.missAt=now; }
       }
-      if(n.status==='pending' && dt<-0.35){ n.status='miss'; score.miss++; score.streak=0;
-        n.gem.material.color.set(0x441111); n.gem.material.emissive.set(0x330000); n.missAt=now; }
       if(n.status==='pending' && dt<=LEAD){
         const k=Math.max(dt,0)/LEAD;
         n.g.visible=true;
         n.g.position.copy(n.target).addScaledVector(geo.out,0.008+HWY*k);
-        n.g.scale.setScalar(dt<0.12 && dt>-0.2 ? 1.35 : 1);
+        const pulse = waiting && dt<=0.001 ? 1.3+0.2*Math.sin(tNow*10) : (dt<0.12?1.35:1);
+        n.g.scale.setScalar(pulse);
         n.ring.visible=true; n.ring.scale.setScalar(1+4*Math.min(k*2,1)); n.ring.material.opacity=1-Math.min(k*2,1)*0.7;
-        if(dt<1.3){ const w=want.get(n.f)||0; want.set(n.f,Math.max(w,1-dt/1.3)); n.laneColor=COLORS[n.s]; }
+        if(dt<1.3){ const w=want.get(n.f); const v=1-Math.max(dt,0)/1.3; if(!w||v>w.v) want.set(n.f,{v,col:COLORS[n.s]}); }
       }
     }
     if(n.status==='miss'){ n.ring.visible=false; const age=now-n.missAt; n.g.visible=age<0.5;
       n.g.position.copy(n.target).addScaledVector(geo.out,-0.02-age*0.1); }
   }
-  // light up the lanes for upcoming frets
-  lanes.forEach((ln,f)=>{ const w=want.get(f)||0; ln.glow+= (w-ln.glow)*0.2;
-    ln.mat.opacity=ln.base+ln.glow*0.35;
-    const note=noteObjs.find(n=>n.f===f && n.status==='pending' && n.t-now<1.3);
-    ln.mat.color.copy(ln.color).lerp(new THREE.Color(note?COLORS[note.s]:0x23307a), ln.glow*0.8); });
+  lanes.forEach((ln,f)=>{ const w=want.get(f); const tgt=w?w.v:0; ln.glow+=(tgt-ln.glow)*0.2;
+    ln.mat.opacity=0.12+ln.glow*0.35; ln.mat.color.copy(ln.base).lerp(new THREE.Color(w?w.col:0x23307a),ln.glow*0.8); });
   updateEffects(dtF);
 
   const judged=score.hit+score.miss, total=noteObjs.length;
-  const acc = judged? (100*score.hit/judged).toFixed(1) : '100.0';
-  drawPanel({title:songSel.value, acc, combo:score.streak, heard: detected===null?'—':noteName(Math.round(detected)),
-             lines:[now<3?`Starting in ${Math.ceil(3-now)}…`:`${score.hit}/${total} notes`]});
-  if(!remaining && effects.length===0 && noteObjs.every(n=>n.status!=='miss' || now-n.missAt>0.6)){
-    state='done';
-    drawPanel({title:'Done! '+Math.round(100*score.hit/total)+'%', lines:[`Hit ${score.hit} · Missed ${score.miss} · Best combo ${score.best}`,'Trigger = play again','Grip = re-align']});
+  const acc=judged?(100*score.hit/judged).toFixed(1):'100.0';
+  const sub = now<3 ? `Starting in ${Math.ceil(3-now)}…` : waiting ? 'Waiting for you to play it…' : `${score.hit}/${total} notes · trigger = pause`;
+  drawHud({title:songName(), mode, acc, combo:score.streak, heard:detected===null?'—':noteName(Math.round(detected)), sub});
+
+  if(!remaining && effects.length===0 && noteObjs.every(n=>n.status!=='miss'||now-n.missAt>0.6)){
+    songActive=false; state='menu';
+    const pct=Math.round(100*score.hit/total);
+    drawHud({title:'Done!', lines:[mode==='Watch'?'Nice run-through':`${pct}% · Best combo ${score.best}`]});
+    openMenu(mode==='Watch'?'Done!':`Done! ${pct}% · best combo ${score.best}`);
   }
 }
 const NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-function noteName(m){ return NAMES[((m%12)+12)%12] + (Math.floor(m/12)-1); }
+function noteName(m){ return NAMES[((m%12)+12)%12]+(Math.floor(m/12)-1); }
 
 renderer.setAnimationLoop(()=>{
-  if(state==='playing') updateSong(); else { lastT=performance.now()/1000; updateEffects(0.016); }
+  if(state==='playing') updateSong(); else updateEffects(0.016);
+  if(menu.visible) updateMenuHover();
+  updateHud();
   renderer.render(scene,camera);
 });
 
-// ---------- Enter AR ----------
-const go = document.getElementById('go'), status = document.getElementById('status');
+// ---------- Enter MR ----------
+const go=document.getElementById('go'), status=document.getElementById('status');
 (async ()=>{
   if(!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))){
-    go.textContent='Mixed reality not supported here';
-    status.textContent='Open this page in the Meta Quest Browser.'; return;
+    go.textContent='Open in Quest Browser'; status.textContent='Mixed reality isn\'t supported in this browser.'; return;
   }
   go.disabled=false; go.textContent='Enter Mixed Reality';
 })();
-go.onclick = async ()=>{
-  try{ await startMic(); }
-  catch(e){ status.textContent='Mic blocked — notes will show but can\'t be checked. ('+e.message+')'; }
+go.onclick=async ()=>{
+  try{ if(!analyser) await startMic(); }
+  catch(e){ status.textContent='Mic blocked — Play/Wait modes can\'t hear you. Watch mode still works.'; }
   try{
-    const session = await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['local-floor'], optionalFeatures:['hand-tracking']});
+    const session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['local-floor'],optionalFeatures:['hand-tracking']});
     renderer.xr.setReferenceSpaceType('local-floor');
     await renderer.xr.setSession(session);
-    setTimeout(startCalibration, 400);
-    session.addEventListener('end', ()=>{ state='calib'; status.textContent='Session ended.'; });
-  }catch(e){ status.textContent='Could not start XR: '+e.message; }
+    hudInit.v=false;
+    setTimeout(startCalibration,400);
+    session.addEventListener('end',()=>{ state='calib'; closeMenu(); });
+  }catch(e){ status.textContent='Could not start: '+e.message; }
 };
 </script>
 </body>
