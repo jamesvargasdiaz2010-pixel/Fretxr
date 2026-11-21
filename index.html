@@ -102,53 +102,81 @@ renderer.domElement.style.display='none';
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
-scene.add(new THREE.HemisphereLight(0xffffff,0x444466,2.2));
+scene.add(new THREE.HemisphereLight(0xffffff,0x444466,2.4));
 
-// controllers (tip = targetRay origin, near the front ring)
-const ctrls=[0,1].map(i=>{
+const ADD = THREE.AdditiveBlending;
+// soft round glow texture used by gems, sparks, markers
+const glowTex = (()=>{ const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
+  const g=x.createRadialGradient(64,64,0,64,64,64); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.25,'rgba(255,255,255,0.6)'); g.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle=g; x.fillRect(0,0,128,128); return new THREE.CanvasTexture(c); })();
+function glowSprite(color, size, opacity=1){
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,color,blending:ADD,transparent:true,depthWrite:false,opacity}));
+  s.scale.set(size,size,1); return s;
+}
+function textSprite(text, color='#fff', px=64, w=256, h=96){
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h; const x=cv.getContext('2d');
+  x.font=`900 ${px}px system-ui`; x.textAlign='center'; x.textBaseline='middle';
+  x.lineWidth=px/7; x.strokeStyle='rgba(0,0,0,0.75)'; x.strokeText(text,w/2,h/2);
+  x.fillStyle=color; x.fillText(text,w/2,h/2);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,depthWrite:false}));
+  return s;
+}
+const hex = c => '#'+c.toString(16).padStart(6,'0');
+
+// controllers
+[0,1].forEach(i=>{
   const c = renderer.xr.getController(i); scene.add(c);
-  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.006), new THREE.MeshBasicMaterial({color:0x00ffff}));
-  c.add(tip);
+  c.add(new THREE.Mesh(new THREE.SphereGeometry(0.005), new THREE.MeshBasicMaterial({color:0x00ffff})));
+  c.add(glowSprite(0x00ffff,0.03,0.8));
   c.addEventListener('selectstart', ()=>onTrigger(c));
   c.addEventListener('squeezestart', ()=>startCalibration());
-  return c;
 });
 
-// info panel (canvas texture)
-const pCanvas = document.createElement('canvas'); pCanvas.width=1024; pCanvas.height=384;
+// HUD panel
+const pCanvas = document.createElement('canvas'); pCanvas.width=1024; pCanvas.height=360;
 const pCtx = pCanvas.getContext('2d'); const pTex = new THREE.CanvasTexture(pCanvas);
-const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.225), new THREE.MeshBasicMaterial({map:pTex,transparent:true}));
+const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.176), new THREE.MeshBasicMaterial({map:pTex,transparent:true,depthWrite:false}));
 scene.add(panel);
-function showPanel(lines){
-  pCtx.clearRect(0,0,1024,384);
-  pCtx.fillStyle='rgba(10,14,24,0.82)'; pCtx.beginPath(); pCtx.roundRect(0,0,1024,384,36); pCtx.fill();
-  pCtx.fillStyle='#fff'; pCtx.font='bold 54px system-ui'; pCtx.fillText(lines[0]||'',40,80);
-  pCtx.font='40px system-ui'; pCtx.fillStyle='#cfd6ff';
-  (lines.slice(1)).forEach((l,i)=>pCtx.fillText(l,40,150+i*58));
+let lastPanel='';
+function drawPanel(o){
+  const key=JSON.stringify(o); if(key===lastPanel) return; lastPanel=key;
+  const x=pCtx; x.clearRect(0,0,1024,360);
+  const g=x.createLinearGradient(0,0,1024,0); g.addColorStop(0,'rgba(20,10,40,0.85)'); g.addColorStop(1,'rgba(10,20,45,0.85)');
+  x.fillStyle=g; x.beginPath(); x.roundRect(0,0,1024,360,40); x.fill();
+  x.strokeStyle='rgba(255,80,200,0.6)'; x.lineWidth=4; x.stroke();
+  x.fillStyle='#ff4fd8'; x.font='800 50px system-ui'; x.fillText(o.title||'',44,74);
+  x.fillStyle='#c9d0ff'; x.font='36px system-ui';
+  (o.lines||[]).forEach((l,i)=>x.fillText(l,44,140+i*52));
+  if(o.acc!==undefined){
+    x.fillStyle='#ff7ad9'; x.font='900 96px system-ui'; x.fillText(o.acc+'%',44,300);
+    x.fillStyle='#fff'; x.fillText(String(o.combo),480,300);
+    x.font='28px system-ui'; x.fillStyle='#99a';
+    x.fillText('ACCURACY',48,222); x.fillText('COMBO',484,222);
+    x.fillText('HEARING',780,222); x.font='900 72px system-ui'; x.fillStyle='#7fffd4'; x.fillText(o.heard,780,300);
+  }
   pTex.needsUpdate=true;
 }
 
 // state
 let state='calib', calibStep=0, calibPts=[];
 const board = new THREE.Group(); scene.add(board);
-let geo=null;        // fretboard geometry
-let noteObjs=[], songStart=0, score={hit:0,miss:0,streak:0}, song=[], detected=null;
+const fx = new THREE.Group(); scene.add(fx);
+let geo=null, lanes=[], noteObjs=[], songStart=0, score={hit:0,miss:0,streak:0,best:0}, detected=null;
 const markers=[];
 
 function startCalibration(){
   state='calib'; calibStep=0; calibPts=[];
   markers.forEach(m=>scene.remove(m)); markers.length=0;
-  board.clear(); clearNotes();
-  placePanelInFront();
-  calibPrompt();
+  clearNotes(); board.clear(); lanes=[];
+  placePanelInFront(); calibPrompt();
 }
 function calibPrompt(){
   const msgs=[
-    ['Align ① of 3','Touch controller tip to the NUT','at the LOW E string, pull trigger.'],
-    ['Align ② of 3','Touch the NUT at the HIGH E string,','pull trigger.'],
-    ['Align ③ of 3','Touch the 12th FRET, middle of the neck,','pull trigger.'],
+    ['Align ① of 3',['Touch controller tip to the NUT','at the LOW E string → trigger']],
+    ['Align ② of 3',['Touch the NUT at the HIGH E string','→ trigger']],
+    ['Align ③ of 3',['Touch the 12th FRET, middle of neck','→ trigger']],
   ];
-  showPanel(msgs[calibStep]);
+  drawPanel({title:msgs[calibStep][0], lines:msgs[calibStep][1]});
 }
 function placePanelInFront(){
   const cam = renderer.xr.getCamera(camera);
@@ -156,145 +184,172 @@ function placePanelInFront(){
   panel.position.copy(cam.position).addScaledVector(dir,0.8); panel.position.y = cam.position.y-0.05;
   panel.lookAt(cam.position.x, panel.position.y, cam.position.z);
 }
-
 function onTrigger(c){
   if(state==='calib'){
     const p = new THREE.Vector3(); c.getWorldPosition(p);
     calibPts.push(p.clone());
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.008), new THREE.MeshBasicMaterial({color:0xffff00}));
-    m.position.copy(p); scene.add(m); markers.push(m);
+    const m = glowSprite(0xffee44,0.04); m.position.copy(p); scene.add(m); markers.push(m);
     calibStep++;
     if(calibStep<3) calibPrompt(); else { buildBoard(); state='ready'; readyPrompt(); }
-  } else if(state==='ready' || state==='done'){
-    startSong();
-  }
+  } else if(state==='ready' || state==='done') startSong();
 }
-function readyPrompt(){
-  showPanel(['Aligned! 🎸', `Song: ${songSel.value}`, 'Pull trigger / pinch to start.', 'Grip button = re-align.']);
-}
+function readyPrompt(){ drawPanel({title:songSel.value, lines:['Aligned! 🎸','Trigger / pinch = start','Grip = re-align']}); }
+
+// ---------- Fretboard + highway ----------
+const HWY = 1.5;   // highway length (m)
+function fretDist(f){ return geo.L*(1-Math.pow(2,-f/12)); }
+function posOnDist(s,d){ const t=(6-s)/5; const widen=1+0.3*(d/(geo.L/2));
+  return geo.nutMid.clone().addScaledVector(geo.neck,d).addScaledVector(geo.across,(t-0.5)*widen); }
+function fretMid(f){ return f===0 ? -0.015 : (fretDist(f-1)+fretDist(f))/2 + (fretDist(f)-fretDist(f-1))*0.15; }
+function posOn(s,f){ return posOnDist(s, fretMid(f)); }
+
+function quad(a,b,c,d,mat){ const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute([...a.toArray(),...b.toArray(),...c.toArray(),...a.toArray(),...c.toArray(),...d.toArray()],3));
+  g.computeVertexNormals(); return new THREE.Mesh(g,mat); }
+function seg(a,b,color,opacity){ return new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),
+  new THREE.LineBasicMaterial({color,transparent:true,opacity,blending:ADD,depthWrite:false})); }
 
 function buildBoard(){
-  markers.forEach(m=>scene.remove(m)); markers.length=0; board.clear();
-  const [A,B,C] = calibPts;               // A nut lowE, B nut highE, C 12th fret center
+  markers.forEach(m=>scene.remove(m)); markers.length=0; board.clear(); lanes=[];
+  const [A,B,C] = calibPts;
   const nutMid = A.clone().add(B).multiplyScalar(0.5);
   const half = C.clone().sub(nutMid);
-  const L = half.length()*2;               // scale length
-  const neck = half.clone().normalize();
-  // string spacing at nut, and widen slightly toward the body (~+30% at 12th)
-  const across = B.clone().sub(A);
-  const cam = renderer.xr.getCamera(camera);
-  let normal = new THREE.Vector3().crossVectors(neck, across).normalize();
-  if(normal.dot(cam.position.clone().sub(nutMid))<0) normal.negate();
-  geo = {A,B,nutMid,L,neck,across,normal};
+  const L = half.length()*2, neck = half.clone().normalize(), across = B.clone().sub(A);
+  const cam = renderer.xr.getCamera(camera).position.clone();
+  // highway direction: perpendicular to the neck, pointing AWAY from you, tilted up a bit
+  const toCam = cam.clone().sub(nutMid);
+  let out = toCam.clone().addScaledVector(neck,-toCam.dot(neck)).negate().normalize();
+  out.addScaledVector(new THREE.Vector3(0,1,0),0.45); out.addScaledVector(neck,-out.dot(neck)).normalize();
+  geo = {A,B,nutMid,L,neck,across,out};
 
-  const mat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.55});
-  const fretMat = new THREE.LineBasicMaterial({color:0xaaaaaa, transparent:true, opacity:0.5});
-  const lift = 0.004;
-  for(const s of [6,5,4,3,2,1]){
-    const a = posOn(s,0).addScaledVector(normal,lift), b = posOnDist(s,L*0.75).addScaledVector(normal,lift);
-    const g = new THREE.BufferGeometry().setFromPoints([a,b]);
-    board.add(new THREE.Line(g, new THREE.LineBasicMaterial({color:COLORS[s],transparent:true,opacity:0.6})));
-  }
+  // strings (glowing, colored)
+  for(const s of [6,5,4,3,2,1]) board.add(seg(posOnDist(s,-0.01),posOnDist(s,fretDist(22)),COLORS[s],0.75));
+  // frets + numbers
   for(let f=0; f<=22; f++){
-    const d = fretDist(f);
-    const g = new THREE.BufferGeometry().setFromPoints([posOnDist(6,d).addScaledVector(normal,lift), posOnDist(1,d).addScaledVector(normal,lift)]);
-    board.add(new THREE.Line(g, f===0?mat:fretMat));
+    const d=fretDist(f);
+    board.add(seg(posOnDist(6.3,d),posOnDist(0.7,d),f===0?0xffffff:0x9aa0ff,f===0?0.9:0.35));
     if([3,5,7,9,12,15,17,19,21].includes(f)){
-      const mid = (fretDist(f-1)+d)/2;
-      const dot = new THREE.Mesh(new THREE.CircleGeometry(f===12?0.005:0.004,12), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.35}));
-      dot.position.copy(posOnDist(3.5,mid)).addScaledVector(normal,lift);
-      dot.lookAt(dot.position.clone().add(normal)); board.add(dot);
+      const n=textSprite(String(f),'#fff',72,128,96); n.scale.set(0.028,0.021,1);
+      n.position.copy(posOnDist(7.0,fretMid(f))); board.add(n);
+      const dot=glowSprite(0xb05bff,0.022,0.9); dot.position.copy(posOnDist(6.6,fretMid(f))); board.add(dot);
     }
   }
-  // move panel above the neck, facing player
-  panel.position.copy(nutMid).addScaledVector(neck,L*0.2).add(new THREE.Vector3(0,0.22,0));
-  panel.lookAt(cam.position);
-}
-function fretDist(f){ return geo.L*(1-Math.pow(2,-f/12)); }
-function posOnDist(s,d){ // s: 6..1 (can be fractional), d: distance from nut
-  const t=(6-s)/5; const widen = 1 + 0.3*(d/(geo.L/2));
-  const center = geo.nutMid.clone().addScaledVector(geo.neck,d);
-  return center.addScaledVector(geo.across,(t-0.5)*widen);
-}
-function posOn(s,f){ // note target: just behind fret wire f (or at nut for open)
-  if(f===0) return posOnDist(s, -0.012);
-  const d = fretDist(f) - (fretDist(f)-fretDist(f-1))*0.3;
-  return posOnDist(s,d);
+  // highway lanes: one translucent strip per fret slot, rising out of the fretboard
+  for(let f=0; f<=22; f++){
+    const d0 = f===0 ? -0.03 : fretDist(f-1), d1 = f===0 ? 0 : fretDist(f);
+    const a=posOnDist(3.5,d0), b=posOnDist(3.5,d1);
+    const a2=a.clone().addScaledVector(out,HWY), b2=b.clone().addScaledVector(out,HWY);
+    const mat=new THREE.MeshBasicMaterial({color:f%2?0x1a2a6a:0x23307a,transparent:true,opacity:0.12,side:THREE.DoubleSide,depthWrite:false});
+    const m=quad(a,b,b2,a2,mat); board.add(m);
+    board.add(seg(b,b2,0x6f7cff,0.18));
+    lanes[f]={mesh:m,mat,base:0.12,glow:0,color:new THREE.Color(f%2?0x1a2a6a:0x23307a)};
+  }
+  // far-end fret numbers
+  for(const f of [3,5,7,9,12,15]){ const n=textSprite(String(f),'#a8b0ff',64,128,96); n.scale.set(0.035,0.026,1);
+    n.position.copy(posOnDist(3.5,fretMid(f))).addScaledVector(out,HWY+0.03); board.add(n); }
+
+  // HUD floats at the far end of the highway, a bit up, facing you
+  panel.position.copy(nutMid).addScaledVector(neck,L*0.3).addScaledVector(out,HWY*0.9).add(new THREE.Vector3(0,0.15,0));
+  panel.lookAt(cam);
 }
 
-// ---------- Song playback ----------
-const LEAD = 2.2, APPROACH = 0.9; // seconds visible, meters away at spawn
-const noteGeo = new THREE.BoxGeometry(0.018,0.018,0.018);
-function clearNotes(){ noteObjs.forEach(n=>{board.remove(n.mesh); board.remove(n.label);}); noteObjs=[]; }
-function makeLabel(text,color){
-  const cv=document.createElement('canvas'); cv.width=64; cv.height=64; const x=cv.getContext('2d');
-  x.fillStyle='#'+color.toString(16).padStart(6,'0'); x.font='bold 46px system-ui'; x.textAlign='center'; x.fillText(text,32,48);
-  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
-  sp.scale.set(0.025,0.025,1); return sp;
-}
+// ---------- Notes ----------
+const LEAD = 2.4;
+const gemGeo = new THREE.CapsuleGeometry(0.008,0.02,4,12); gemGeo.rotateZ(Math.PI/2);
+function clearNotes(){ noteObjs.forEach(n=>board.remove(n.g)); noteObjs=[]; fx.clear(); }
 function startSong(){
   clearNotes();
   const speed = speedEl.value/100;
-  song = SONGS[songSel.value].map(n=>({...n, t:n.t/speed + 3}));   // 3s lead-in
-  for(const n of song){
-    const mat = new THREE.MeshStandardMaterial({color:COLORS[n.s], emissive:COLORS[n.s], emissiveIntensity:0.5});
-    const mesh = new THREE.Mesh(noteGeo, mat); mesh.visible=false; board.add(mesh);
-    const label = makeLabel(String(n.f), COLORS[n.s]); label.visible=false; board.add(label);
-    noteObjs.push({...n, mesh, label, target:posOn(n.s,n.f), status:'pending', expected:OPEN_MIDI[n.s]+n.f});
+  const list = SONGS[songSel.value].map(n=>({...n, t:n.t/speed + 3}));
+  for(const n of list){
+    const col=COLORS[n.s], g=new THREE.Group();
+    const gem=new THREE.Mesh(gemGeo,new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.9,roughness:0.3}));
+    gem.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0), geo.across.clone().normalize());
+    g.add(gem); g.add(glowSprite(col,0.07,0.7));
+    const lbl=textSprite(String(n.f),hex(col),80,128,96); lbl.scale.set(0.03,0.0225,1); lbl.position.addScaledVector(geo.out,0.02); g.add(lbl);
+    // landing ring on the fretboard
+    const ring=new THREE.Mesh(new THREE.RingGeometry(0.009,0.012,32),new THREE.MeshBasicMaterial({color:col,transparent:true,blending:ADD,side:THREE.DoubleSide,depthWrite:false}));
+    ring.position.copy(posOn(n.s,n.f)); ring.lookAt(ring.position.clone().add(geo.out)); ring.visible=false; board.add(ring);
+    g.visible=false; board.add(g);
+    noteObjs.push({...n, g, gem, ring, target:posOn(n.s,n.f), status:'pending', expected:OPEN_MIDI[n.s]+n.f});
   }
-  score={hit:0,miss:0,streak:0};
+  score={hit:0,miss:0,streak:0,best:0};
   songStart = performance.now()/1000; state='playing';
 }
+
+// effects
+const effects=[];
+function burst(pos,color){
+  for(let i=0;i<14;i++){ const s=glowSprite(i<3?0xffffff:color,0.025); s.position.copy(pos); fx.add(s);
+    const v=new THREE.Vector3(Math.random()-0.5,Math.random()-0.5,Math.random()-0.5).multiplyScalar(0.6).addScaledVector(geo.out,0.5);
+    effects.push({o:s,v,life:0.5,t:0}); }
+  const f=glowSprite(color,0.12); f.position.copy(pos); fx.add(f); effects.push({o:f,v:new THREE.Vector3(),life:0.25,t:0,grow:true});
+}
+function popText(pos,text,color){
+  const s=textSprite(text,color,64,320,96); s.scale.set(0.09,0.027,1); s.position.copy(pos).addScaledVector(geo.out,0.05); fx.add(s);
+  effects.push({o:s,v:geo.out.clone().multiplyScalar(0.12).add(new THREE.Vector3(0,0.08,0)),life:0.8,t:0,text:true});
+}
+function updateEffects(dt){
+  for(let i=effects.length-1;i>=0;i--){ const e=effects[i]; e.t+=dt;
+    e.o.position.addScaledVector(e.v,dt); const k=1-e.t/e.life; e.o.material.opacity=Math.max(k,0);
+    if(e.grow) e.o.scale.setScalar(0.12+e.t*0.6);
+    if(e.t>=e.life){ fx.remove(e.o); effects.splice(i,1); } }
+}
+
+let lastT=performance.now()/1000;
 function updateSong(){
-  const now = performance.now()/1000 - songStart;
+  const tNow=performance.now()/1000, dtF=Math.min(tNow-lastT,0.05); lastT=tNow;
+  const now = tNow - songStart;
   detected = detectMidi();
-  let remaining=false;
+  let remaining=false; const want=new Map();
   for(const n of noteObjs){
     const dt = n.t - now;
     if(n.status==='pending'){
       remaining=true;
-      // judge
-      if(detected!==null && dt<0.18 && dt>-0.35){
-        const diff = detected - n.expected;
-        const pcDiff = ((Math.round(diff)%12)+12)%12;
-        if(Math.abs(diff)<0.6 || (pcDiff===0 && Math.abs(diff-Math.round(diff))<0.6)){
-          n.status='hit'; score.hit++; score.streak++; n.hitAt=now;
-          n.mesh.material.color.set(0xffffff); n.mesh.material.emissive.set(0x66ff99); n.mesh.material.emissiveIntensity=1.5;
+      if(detected!==null && dt<0.2 && dt>-0.35){
+        const diff = detected - n.expected, r=Math.round(diff);
+        if(Math.abs(diff)<0.6 || (((r%12)+12)%12===0 && Math.abs(diff-r)<0.6)){
+          n.status='hit'; score.hit++; score.streak++; score.best=Math.max(score.best,score.streak);
+          const err=Math.abs(dt);
+          popText(n.target, err<0.08?'PERFECT!':err<0.18?'GREAT!':'OK', err<0.08?'#ffe14d':err<0.18?'#7dff9a':'#9ad');
+          burst(n.target,COLORS[n.s]); n.g.visible=false; n.ring.visible=false;
         }
       }
-      if(n.status==='pending' && dt<-0.35){ n.status='miss'; score.miss++; score.streak=0; n.hitAt=now; n.mesh.material.color.set(0x552222); n.mesh.material.emissive.set(0x220000); }
+      if(n.status==='pending' && dt<-0.35){ n.status='miss'; score.miss++; score.streak=0;
+        n.gem.material.color.set(0x441111); n.gem.material.emissive.set(0x330000); n.missAt=now; }
+      if(n.status==='pending' && dt<=LEAD){
+        const k=Math.max(dt,0)/LEAD;
+        n.g.visible=true;
+        n.g.position.copy(n.target).addScaledVector(geo.out,0.008+HWY*k);
+        n.g.scale.setScalar(dt<0.12 && dt>-0.2 ? 1.35 : 1);
+        n.ring.visible=true; n.ring.scale.setScalar(1+4*Math.min(k*2,1)); n.ring.material.opacity=1-Math.min(k*2,1)*0.7;
+        if(dt<1.3){ const w=want.get(n.f)||0; want.set(n.f,Math.max(w,1-dt/1.3)); n.laneColor=COLORS[n.s]; }
+      }
     }
-    if(n.status==='pending' && dt<=LEAD){
-      const k = Math.max(dt,0)/LEAD;
-      n.mesh.visible=true; n.label.visible=true;
-      n.mesh.position.copy(n.target).addScaledVector(geo.normal, 0.012 + APPROACH*k).addScaledVector(geo.neck, -0.0);
-      n.mesh.scale.setScalar(dt<0.15?1.4:1);
-      n.label.position.copy(n.mesh.position).addScaledVector(geo.normal,0.02);
-    } else if(n.status!=='pending'){
-      const age = now-n.hitAt;
-      if(age<0.4){ n.mesh.visible=true; n.mesh.scale.setScalar(n.status==='hit'?1.6+age*2:1); n.label.visible=false; }
-      else { n.mesh.visible=false; n.label.visible=false; }
-    }
+    if(n.status==='miss'){ n.ring.visible=false; const age=now-n.missAt; n.g.visible=age<0.5;
+      n.g.position.copy(n.target).addScaledVector(geo.out,-0.02-age*0.1); }
   }
-  const total = noteObjs.length;
-  const heard = detected===null ? '—' : noteName(Math.round(detected));
-  showPanel([`${songSel.value}`, `Hits ${score.hit}/${total}   Streak ${score.streak}`, `Hearing: ${heard}`, now<3?`Starting in ${Math.ceil(3-now)}…`:'']);
-  if(!remaining && noteObjs.every(n=>performance.now()/1000-songStart-n.hitAt>0.5)){
+  // light up the lanes for upcoming frets
+  lanes.forEach((ln,f)=>{ const w=want.get(f)||0; ln.glow+= (w-ln.glow)*0.2;
+    ln.mat.opacity=ln.base+ln.glow*0.35;
+    const note=noteObjs.find(n=>n.f===f && n.status==='pending' && n.t-now<1.3);
+    ln.mat.color.copy(ln.color).lerp(new THREE.Color(note?COLORS[note.s]:0x23307a), ln.glow*0.8); });
+  updateEffects(dtF);
+
+  const judged=score.hit+score.miss, total=noteObjs.length;
+  const acc = judged? (100*score.hit/judged).toFixed(1) : '100.0';
+  drawPanel({title:songSel.value, acc, combo:score.streak, heard: detected===null?'—':noteName(Math.round(detected)),
+             lines:[now<3?`Starting in ${Math.ceil(3-now)}…`:`${score.hit}/${total} notes`]});
+  if(!remaining && effects.length===0 && noteObjs.every(n=>n.status!=='miss' || now-n.missAt>0.6)){
     state='done';
-    const pct = Math.round(100*score.hit/total);
-    showPanel(['Done! '+pct+'%', `Hit ${score.hit}  ·  Missed ${score.miss}`, 'Trigger = play again', 'Grip = re-align']);
+    drawPanel({title:'Done! '+Math.round(100*score.hit/total)+'%', lines:[`Hit ${score.hit} · Missed ${score.miss} · Best combo ${score.best}`,'Trigger = play again','Grip = re-align']});
   }
 }
 const NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 function noteName(m){ return NAMES[((m%12)+12)%12] + (Math.floor(m/12)-1); }
 
 renderer.setAnimationLoop(()=>{
-  if(state==='playing') updateSong();
-  else if(state==='calib' || state==='ready'){
-    // live readout of what the mic hears, useful to check your amp
-    const d = detectMidi();
-    if(state==='ready' && d!==null) { /* keep panel stable */ }
-  }
+  if(state==='playing') updateSong(); else { lastT=performance.now()/1000; updateEffects(0.016); }
   renderer.render(scene,camera);
 });
 
