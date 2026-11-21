@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FretXR – Guitar Highway</title>
+<style>
+  body{margin:0;background:#0d0f14;color:#eef;font-family:system-ui,sans-serif;display:flex;justify-content:center}
+  main{max-width:520px;padding:28px 20px}
+  h1{margin:0 0 4px;font-size:30px} p{color:#aab;line-height:1.45}
+  label{display:block;margin:16px 0 6px;font-weight:600}
+  select,input[type=range]{width:100%;font-size:18px;padding:8px;background:#1b1f2a;color:#fff;border:1px solid #334;border-radius:8px}
+  button{margin-top:22px;width:100%;font-size:22px;padding:16px;border:0;border-radius:12px;background:#3b82f6;color:#fff;font-weight:700}
+  button:disabled{background:#334;color:#889}
+  #status{margin-top:14px;color:#fc6;min-height:1.4em}
+  ol{color:#aab;padding-left:20px;line-height:1.5}
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<main>
+  <h1>🎸 FretXR</h1>
+  <p>Electric guitar · mixed reality note highway</p>
+  <label for="song">Song</label>
+  <select id="song"></select>
+  <label for="speed">Speed: <span id="speedVal">100%</span></label>
+  <input id="speed" type="range" min="50" max="120" step="5" value="100">
+  <button id="go" disabled>Checking VR support…</button>
+  <div id="status"></div>
+  <ol>
+    <li>Have your amp audible (the headset mic listens for notes).</li>
+    <li>Hold guitar in playing position. Touch the <b>front tip</b> of your controller to each point and pull the <b>trigger</b>:<br>
+      ① nut at the <b>low E</b> string → ② nut at the <b>high E</b> string → ③ <b>12th fret</b>, middle of the neck.</li>
+    <li>Set the controller down, then pinch (or press trigger) to start. <b>Grip button</b> = re-align anytime.</li>
+  </ol>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ---------- Songs (tab string numbers: 6 = low E … 1 = high E) ----------
+const OPEN_MIDI = {6:40,5:45,4:50,3:55,2:59,1:64};
+const COLORS    = {6:0xff3b3b,5:0xffd23b,4:0x3b8bff,3:0xff8a1f,2:0x2fd36b,1:0xb05bff};
+function seq(bpm, notes){ const spb=60/bpm; return notes.map(([beat,s,f])=>({t:beat*spb,s,f})); }
+function line(list, step=1, start=0){ return list.map((sf,i)=>[start+i*step, sf[0], sf[1]]); }
+
+const pentUp = [[6,0],[6,3],[5,0],[5,2],[4,0],[4,2],[3,0],[3,2],[2,0],[2,3],[1,0],[1,3]];
+const chrom = []; for (const s of [6,5,4,3,2,1]) for (const f of [1,2,3,4]) chrom.push([s,f]);
+const SONGS = {
+  'Open strings warm-up':      seq(60,  line([...[6,5,4,3,2,1].map(s=>[s,0]), ...[1,2,3,4,5,6].map(s=>[s,0])], 2)),
+  'E minor pentatonic':        seq(80,  line([...pentUp, ...pentUp.slice().reverse()], 1)),
+  'Chromatic 1-2-3-4':         seq(75,  line(chrom, 1)),
+  'Power riff (original)':     seq(95,  line([[6,0],[6,0],[6,3],[6,5],[6,0],[6,0],[6,7],[6,5],
+                                              [6,0],[6,0],[6,3],[6,5],[5,2],[5,0],[6,3],[6,0]], 1)),
+  'Low-E fret walk':           seq(80,  line([0,1,2,3,4,5,7,9,12,9,7,5,3,1,0].map(f=>[6,f]), 1)),
+};
+const songSel = document.getElementById('song');
+for (const k in SONGS){ const o=document.createElement('option'); o.textContent=k; songSel.appendChild(o); }
+const speedEl = document.getElementById('speed'), speedVal = document.getElementById('speedVal');
+speedEl.oninput = ()=> speedVal.textContent = speedEl.value+'%';
+
+// ---------- Pitch detection (autocorrelation) ----------
+let analyser=null, audioBuf=null, sampleRate=48000;
+async function startMic(){
+  const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  const ctx = new AudioContext(); sampleRate = ctx.sampleRate;
+  const src = ctx.createMediaStreamSource(stream);
+  analyser = ctx.createAnalyser(); analyser.fftSize = 4096;
+  src.connect(analyser); audioBuf = new Float32Array(analyser.fftSize);
+}
+function detectMidi(){
+  if(!analyser) return null;
+  analyser.getFloatTimeDomainData(audioBuf);
+  const N = audioBuf.length; let rms=0;
+  for(let i=0;i<N;i++) rms+=audioBuf[i]*audioBuf[i];
+  rms=Math.sqrt(rms/N); if(rms<0.01) return null;
+  const minLag=Math.floor(sampleRate/1400), maxLag=Math.floor(sampleRate/70);
+  const W = N - maxLag; let best=-1, bestLag=-1; const c=[];
+  for(let lag=minLag; lag<=maxLag; lag++){
+    let s=0,e1=0,e2=0;
+    for(let i=0;i<W;i+=2){ const a=audioBuf[i], b=audioBuf[i+lag]; s+=a*b; e1+=a*a; e2+=b*b; }
+    const v = s/Math.sqrt(e1*e2+1e-9); c[lag]=v;
+    if(v>best){best=v;bestLag=lag;}
+  }
+  if(best<0.6) return null;
+  // take the first lag that's close to the max (avoids octave-down errors)
+  for(let lag=minLag+1; lag<maxLag; lag++){
+    if(c[lag]>0.9*best && c[lag]>=c[lag-1] && c[lag]>=c[lag+1]){ bestLag=lag; break; }
+  }
+  const freq = sampleRate/bestLag;
+  return 69 + 12*Math.log2(freq/440);
+}
+
+// ---------- Three.js / WebXR ----------
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+renderer.domElement.style.display='none';
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
+scene.add(new THREE.HemisphereLight(0xffffff,0x444466,2.2));
+
+// controllers (tip = targetRay origin, near the front ring)
+const ctrls=[0,1].map(i=>{
+  const c = renderer.xr.getController(i); scene.add(c);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.006), new THREE.MeshBasicMaterial({color:0x00ffff}));
+  c.add(tip);
+  c.addEventListener('selectstart', ()=>onTrigger(c));
+  c.addEventListener('squeezestart', ()=>startCalibration());
+  return c;
+});
+
+// info panel (canvas texture)
+const pCanvas = document.createElement('canvas'); pCanvas.width=1024; pCanvas.height=384;
+const pCtx = pCanvas.getContext('2d'); const pTex = new THREE.CanvasTexture(pCanvas);
+const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.225), new THREE.MeshBasicMaterial({map:pTex,transparent:true}));
+scene.add(panel);
+function showPanel(lines){
+  pCtx.clearRect(0,0,1024,384);
+  pCtx.fillStyle='rgba(10,14,24,0.82)'; pCtx.beginPath(); pCtx.roundRect(0,0,1024,384,36); pCtx.fill();
+  pCtx.fillStyle='#fff'; pCtx.font='bold 54px system-ui'; pCtx.fillText(lines[0]||'',40,80);
+  pCtx.font='40px system-ui'; pCtx.fillStyle='#cfd6ff';
+  (lines.slice(1)).forEach((l,i)=>pCtx.fillText(l,40,150+i*58));
+  pTex.needsUpdate=true;
+}
+
+// state
+let state='calib', calibStep=0, calibPts=[];
+const board = new THREE.Group(); scene.add(board);
+let geo=null;        // fretboard geometry
+let noteObjs=[], songStart=0, score={hit:0,miss:0,streak:0}, song=[], detected=null;
+const markers=[];
+
+function startCalibration(){
+  state='calib'; calibStep=0; calibPts=[];
+  markers.forEach(m=>scene.remove(m)); markers.length=0;
+  board.clear(); clearNotes();
+  placePanelInFront();
+  calibPrompt();
+}
+function calibPrompt(){
+  const msgs=[
+    ['Align ① of 3','Touch controller tip to the NUT','at the LOW E string, pull trigger.'],
+    ['Align ② of 3','Touch the NUT at the HIGH E string,','pull trigger.'],
+    ['Align ③ of 3','Touch the 12th FRET, middle of the neck,','pull trigger.'],
+  ];
+  showPanel(msgs[calibStep]);
+}
+function placePanelInFront(){
+  const cam = renderer.xr.getCamera(camera);
+  const dir = new THREE.Vector3(0,0,-1).applyQuaternion(cam.quaternion); dir.y=0; dir.normalize();
+  panel.position.copy(cam.position).addScaledVector(dir,0.8); panel.position.y = cam.position.y-0.05;
+  panel.lookAt(cam.position.x, panel.position.y, cam.position.z);
+}
+
+function onTrigger(c){
+  if(state==='calib'){
+    const p = new THREE.Vector3(); c.getWorldPosition(p);
+    calibPts.push(p.clone());
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.008), new THREE.MeshBasicMaterial({color:0xffff00}));
+    m.position.copy(p); scene.add(m); markers.push(m);
+    calibStep++;
+    if(calibStep<3) calibPrompt(); else { buildBoard(); state='ready'; readyPrompt(); }
+  } else if(state==='ready' || state==='done'){
+    startSong();
+  }
+}
+function readyPrompt(){
+  showPanel(['Aligned! 🎸', `Song: ${songSel.value}`, 'Pull trigger / pinch to start.', 'Grip button = re-align.']);
+}
+
+function buildBoard(){
+  markers.forEach(m=>scene.remove(m)); markers.length=0; board.clear();
+  const [A,B,C] = calibPts;               // A nut lowE, B nut highE, C 12th fret center
+  const nutMid = A.clone().add(B).multiplyScalar(0.5);
+  const half = C.clone().sub(nutMid);
+  const L = half.length()*2;               // scale length
+  const neck = half.clone().normalize();
+  // string spacing at nut, and widen slightly toward the body (~+30% at 12th)
+  const across = B.clone().sub(A);
+  const cam = renderer.xr.getCamera(camera);
+  let normal = new THREE.Vector3().crossVectors(neck, across).normalize();
+  if(normal.dot(cam.position.clone().sub(nutMid))<0) normal.negate();
+  geo = {A,B,nutMid,L,neck,across,normal};
+
+  const mat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.55});
+  const fretMat = new THREE.LineBasicMaterial({color:0xaaaaaa, transparent:true, opacity:0.5});
+  const lift = 0.004;
+  for(const s of [6,5,4,3,2,1]){
+    const a = posOn(s,0).addScaledVector(normal,lift), b = posOnDist(s,L*0.75).addScaledVector(normal,lift);
+    const g = new THREE.BufferGeometry().setFromPoints([a,b]);
+    board.add(new THREE.Line(g, new THREE.LineBasicMaterial({color:COLORS[s],transparent:true,opacity:0.6})));
+  }
+  for(let f=0; f<=22; f++){
+    const d = fretDist(f);
+    const g = new THREE.BufferGeometry().setFromPoints([posOnDist(6,d).addScaledVector(normal,lift), posOnDist(1,d).addScaledVector(normal,lift)]);
+    board.add(new THREE.Line(g, f===0?mat:fretMat));
+    if([3,5,7,9,12,15,17,19,21].includes(f)){
+      const mid = (fretDist(f-1)+d)/2;
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(f===12?0.005:0.004,12), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.35}));
+      dot.position.copy(posOnDist(3.5,mid)).addScaledVector(normal,lift);
+      dot.lookAt(dot.position.clone().add(normal)); board.add(dot);
+    }
+  }
+  // move panel above the neck, facing player
+  panel.position.copy(nutMid).addScaledVector(neck,L*0.2).add(new THREE.Vector3(0,0.22,0));
+  panel.lookAt(cam.position);
+}
+function fretDist(f){ return geo.L*(1-Math.pow(2,-f/12)); }
+function posOnDist(s,d){ // s: 6..1 (can be fractional), d: distance from nut
+  const t=(6-s)/5; const widen = 1 + 0.3*(d/(geo.L/2));
+  const center = geo.nutMid.clone().addScaledVector(geo.neck,d);
+  return center.addScaledVector(geo.across,(t-0.5)*widen);
+}
+function posOn(s,f){ // note target: just behind fret wire f (or at nut for open)
+  if(f===0) return posOnDist(s, -0.012);
+  const d = fretDist(f) - (fretDist(f)-fretDist(f-1))*0.3;
+  return posOnDist(s,d);
+}
+
+// ---------- Song playback ----------
+const LEAD = 2.2, APPROACH = 0.9; // seconds visible, meters away at spawn
+const noteGeo = new THREE.BoxGeometry(0.018,0.018,0.018);
+function clearNotes(){ noteObjs.forEach(n=>{board.remove(n.mesh); board.remove(n.label);}); noteObjs=[]; }
+function makeLabel(text,color){
+  const cv=document.createElement('canvas'); cv.width=64; cv.height=64; const x=cv.getContext('2d');
+  x.fillStyle='#'+color.toString(16).padStart(6,'0'); x.font='bold 46px system-ui'; x.textAlign='center'; x.fillText(text,32,48);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
+  sp.scale.set(0.025,0.025,1); return sp;
+}
+function startSong(){
+  clearNotes();
+  const speed = speedEl.value/100;
+  song = SONGS[songSel.value].map(n=>({...n, t:n.t/speed + 3}));   // 3s lead-in
+  for(const n of song){
+    const mat = new THREE.MeshStandardMaterial({color:COLORS[n.s], emissive:COLORS[n.s], emissiveIntensity:0.5});
+    const mesh = new THREE.Mesh(noteGeo, mat); mesh.visible=false; board.add(mesh);
+    const label = makeLabel(String(n.f), COLORS[n.s]); label.visible=false; board.add(label);
+    noteObjs.push({...n, mesh, label, target:posOn(n.s,n.f), status:'pending', expected:OPEN_MIDI[n.s]+n.f});
+  }
+  score={hit:0,miss:0,streak:0};
+  songStart = performance.now()/1000; state='playing';
+}
+function updateSong(){
+  const now = performance.now()/1000 - songStart;
+  detected = detectMidi();
+  let remaining=false;
+  for(const n of noteObjs){
+    const dt = n.t - now;
+    if(n.status==='pending'){
+      remaining=true;
+      // judge
+      if(detected!==null && dt<0.18 && dt>-0.35){
+        const diff = detected - n.expected;
+        const pcDiff = ((Math.round(diff)%12)+12)%12;
+        if(Math.abs(diff)<0.6 || (pcDiff===0 && Math.abs(diff-Math.round(diff))<0.6)){
+          n.status='hit'; score.hit++; score.streak++; n.hitAt=now;
+          n.mesh.material.color.set(0xffffff); n.mesh.material.emissive.set(0x66ff99); n.mesh.material.emissiveIntensity=1.5;
+        }
+      }
+      if(n.status==='pending' && dt<-0.35){ n.status='miss'; score.miss++; score.streak=0; n.hitAt=now; n.mesh.material.color.set(0x552222); n.mesh.material.emissive.set(0x220000); }
+    }
+    if(n.status==='pending' && dt<=LEAD){
+      const k = Math.max(dt,0)/LEAD;
+      n.mesh.visible=true; n.label.visible=true;
+      n.mesh.position.copy(n.target).addScaledVector(geo.normal, 0.012 + APPROACH*k).addScaledVector(geo.neck, -0.0);
+      n.mesh.scale.setScalar(dt<0.15?1.4:1);
+      n.label.position.copy(n.mesh.position).addScaledVector(geo.normal,0.02);
+    } else if(n.status!=='pending'){
+      const age = now-n.hitAt;
+      if(age<0.4){ n.mesh.visible=true; n.mesh.scale.setScalar(n.status==='hit'?1.6+age*2:1); n.label.visible=false; }
+      else { n.mesh.visible=false; n.label.visible=false; }
+    }
+  }
+  const total = noteObjs.length;
+  const heard = detected===null ? '—' : noteName(Math.round(detected));
+  showPanel([`${songSel.value}`, `Hits ${score.hit}/${total}   Streak ${score.streak}`, `Hearing: ${heard}`, now<3?`Starting in ${Math.ceil(3-now)}…`:'']);
+  if(!remaining && noteObjs.every(n=>performance.now()/1000-songStart-n.hitAt>0.5)){
+    state='done';
+    const pct = Math.round(100*score.hit/total);
+    showPanel(['Done! '+pct+'%', `Hit ${score.hit}  ·  Missed ${score.miss}`, 'Trigger = play again', 'Grip = re-align']);
+  }
+}
+const NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function noteName(m){ return NAMES[((m%12)+12)%12] + (Math.floor(m/12)-1); }
+
+renderer.setAnimationLoop(()=>{
+  if(state==='playing') updateSong();
+  else if(state==='calib' || state==='ready'){
+    // live readout of what the mic hears, useful to check your amp
+    const d = detectMidi();
+    if(state==='ready' && d!==null) { /* keep panel stable */ }
+  }
+  renderer.render(scene,camera);
+});
+
+// ---------- Enter AR ----------
+const go = document.getElementById('go'), status = document.getElementById('status');
+(async ()=>{
+  if(!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))){
+    go.textContent='Mixed reality not supported here';
+    status.textContent='Open this page in the Meta Quest Browser.'; return;
+  }
+  go.disabled=false; go.textContent='Enter Mixed Reality';
+})();
+go.onclick = async ()=>{
+  try{ await startMic(); }
+  catch(e){ status.textContent='Mic blocked — notes will show but can\'t be checked. ('+e.message+')'; }
+  try{
+    const session = await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['local-floor'], optionalFeatures:['hand-tracking']});
+    renderer.xr.setReferenceSpaceType('local-floor');
+    await renderer.xr.setSession(session);
+    setTimeout(startCalibration, 400);
+    session.addEventListener('end', ()=>{ state='calib'; status.textContent='Session ended.'; });
+  }catch(e){ status.textContent='Could not start XR: '+e.message; }
+};
+</script>
+</body>
+</html>
